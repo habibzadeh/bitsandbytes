@@ -137,3 +137,7 @@ dmypy.json
 
 dependencies
 cuda_build
+libbitsandbytes_cuda.dir
+libbitsandbytes_cpu.dir
+x64
+.vs
