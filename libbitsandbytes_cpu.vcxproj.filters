@@ -1,0 +1,22 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="I:\DeepLearning_Workspace\bitsandbytes\csrc\common.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="I:\DeepLearning_Workspace\bitsandbytes\csrc\cpu_ops.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="I:\DeepLearning_Workspace\bitsandbytes\csrc\pythonInterface.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="I:\DeepLearning_Workspace\bitsandbytes\CMakelists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{8DDCAD33-1C6E-34BA-B3DD-CCAF1EE611C3}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
