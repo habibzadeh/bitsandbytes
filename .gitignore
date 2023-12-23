@@ -2,7 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
-
+.idea
 # C extensions
 bitsandbytes/*.so
 bitsandbytes/*.dll
@@ -14,7 +14,6 @@ bitsandbytes/*.exp
 build/
 build_*/
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/
