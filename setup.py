@@ -18,16 +18,16 @@ def read(fname):
 
 setup(
     name=f"bitsandbytes",
-    version=f"0.41.2",
+    version="0.42.0",
     author="Tim Dettmers",
     author_email="dettmers@cs.washington.edu",
     description="k-bit optimizers and matrix multiplication routines.",
     license="MIT",
     keywords="gpu optimizers optimization 8-bit quantization compression",
     url="https://github.com/TimDettmers/bitsandbytes",
+    install_requires=['scipy'],
     packages=find_packages(),
     package_data={"": libs},
-    install_requires=['scipy'],
     long_description=read("README.md"),
     long_description_content_type="text/markdown",
     classifiers=[

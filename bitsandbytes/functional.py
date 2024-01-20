@@ -9,7 +9,6 @@ import random
 import torch
 import itertools
 import math
-from scipy.stats import norm
 import numpy as np
 
 from functools import reduce  # Required in Python 3
@@ -137,13 +136,10 @@ class CUBLAS_Context:
 
     def get_context(self, device):
         if device.index not in self.context:
-            if torch.cuda.is_available():
-                prev_device = torch.cuda.current_device()
-                torch.cuda.set_device(device)
-                self.context[device.index] = ct.c_void_p(lib.get_context())
-                torch.cuda.set_device(prev_device)
-            else:
-                self.context[device.index] = ct.c_void_p(lib.get_context())
+            prev_device = torch.cuda.current_device()
+            torch.cuda.set_device(device)
+            self.context[device.index] = ct.c_void_p(lib.get_context())
+            torch.cuda.set_device(prev_device)
         return self.context[device.index]
 
 
@@ -238,6 +234,7 @@ def create_linear_map(signed=True, total_bits=8, add_zero=True):
         return torch.Tensor(values[:l].tolist() + [0]*gap + values[l:].tolist())
 
 def create_normal_map(offset=0.9677083, use_extra_value=True):
+    from scipy.stats import norm
 
     if use_extra_value:
         # one more positive value, this is an asymmetric type
@@ -416,17 +413,13 @@ def get_ptr(A: Tensor) -> ct.c_void_p:
 
 
 def pre_call(device):
-    if torch.cuda.is_available():
-        prev_device = torch.cuda.current_device()
-        torch.cuda.set_device(device)
-        return prev_device
-    else:
-        return device
+    prev_device = torch.cuda.current_device()
+    torch.cuda.set_device(device)
+    return prev_device
 
 
 def post_call(prev_device):
-    if torch.cuda.is_available():
-        torch.cuda.set_device(prev_device)
+    torch.cuda.set_device(prev_device)
 
 
 def get_transform_func(dtype, orderA, orderOut, transpose=False):
@@ -649,7 +642,7 @@ class QuantState:
             blocksize=qs_dict['blocksize'],
             code=qs_dict['quant_map'].to(device),
             dtype=getattr(torch, qs_dict['dtype']),
-            shape=torch.Size(qs_dict['shape']),
+            shape=torch.Size(qs_dict['shape']) if qs_dict['shape'] is not None else None,
             offset=offset,
             state2=state2,
         )
@@ -658,7 +651,7 @@ class QuantState:
     def as_dict(self, packed=False):
         """
         returns dict of tensors and strings to use in serialization via _save_to_state_dict()
-        param: packed -- returns dict[str, torch.Tensor] for state_dict
+        param: packed -- returns dict[str, torch.Tensor] for state_dict fit for safetensors saving
         """
         qs_dict = {
             'quant_type': self.quant_type,
@@ -666,19 +659,20 @@ class QuantState:
             'blocksize': self.blocksize,
             'quant_map': self.code,
             'dtype': str(self.dtype).strip('torch.'),
-            'shape': tuple(self.shape) if self.nested else None,
+            'shape': tuple(self.shape),
         }
         if self.nested:
             qs_dict.update({
                 'nested_absmax': self.state2.absmax,
                 'nested_blocksize': self.state2.blocksize,
-                'nested_quant_map': self.state2.code,
+                'nested_quant_map': self.state2.code.clone(),  # un-shared to avoid restoring it after shared tensors are removed by safetensors
                 'nested_dtype': str(self.state2.dtype).strip('torch.'),
                 'nested_offset': self.offset.item(),
             })
         if not packed:
             return qs_dict
 
+        # packed format allows serialization of non-tensor components, critical for saving in safetensors format
         qs_packed_dict = {k: v for k, v in qs_dict.items() if isinstance(v, torch.Tensor)}
         non_tensor_dict = {k: v for k, v in qs_dict.items() if not isinstance(v, torch.Tensor)}
         qs_packed_dict["quant_state." + "bitsandbytes__" + self.quant_type] = pack_dict_to_tensor(non_tensor_dict)

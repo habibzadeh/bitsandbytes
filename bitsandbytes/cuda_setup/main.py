@@ -70,9 +70,10 @@ class CUDASetup:
             self.add_log_entry('CUDA SETUP: Solution 1b): Once the library is found add it to the LD_LIBRARY_PATH: export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:FOUND_PATH_FROM_1a')
             self.add_log_entry('CUDA SETUP: Solution 1c): For a permanent solution add the export from 1b into your .bashrc file, located at ~/.bashrc')
             self.add_log_entry('CUDA SETUP: Solution 2: If no library was found in step 1a) you need to install CUDA.')
-            self.add_log_entry('CUDA SETUP: Solution 2a): Download CUDA install script: wget https://github.com/TimDettmers/bitsandbytes/blob/main/cuda_install.sh')
+            self.add_log_entry('CUDA SETUP: Solution 2a): Download CUDA install script: wget https://raw.githubusercontent.com/TimDettmers/bitsandbytes/main/cuda_install.sh')
             self.add_log_entry('CUDA SETUP: Solution 2b): Install desired CUDA version to desired location. The syntax is bash cuda_install.sh CUDA_VERSION PATH_TO_INSTALL_INTO.')
             self.add_log_entry('CUDA SETUP: Solution 2b): For example, "bash cuda_install.sh 113 ~/local/" will download CUDA 11.3 and install into the folder ~/local')
+
             return
 
         make_cmd = f'CUDA_VERSION={self.cuda_version_string}'
@@ -188,7 +189,8 @@ def is_cublasLt_compatible(cc):
     if cc is not None:
         cc_major, cc_minor = cc.split('.')
         if int(cc_major) < 7 or (int(cc_major) == 7 and int(cc_minor) < 5):
-            CUDASetup.get_instance().add_log_entry("WARNING: Compute capability < 7.5 detected! Only slow 8-bit matmul is supported for your GPU!", is_warning=True)
+            CUDASetup.get_instance().add_log_entry("WARNING: Compute capability < 7.5 detected! Only slow 8-bit matmul is supported for your GPU! \
+                    If you run into issues with 8-bit matmul, you can try 4-bit quantization: https://huggingface.co/blog/4bit-transformers-bitsandbytes", is_warning=True)
         else:
             has_cublaslt = True
     return has_cublaslt
@@ -203,11 +205,13 @@ def remove_non_existent_dirs(candidate_paths: Set[Path]) -> Set[Path]:
         try:
             if os.path.isdir(path):
                 existent_directories.add(path)
+        except PermissionError as pex:
+            # Handle the PermissionError first as it is a subtype of OSError
+            # https://docs.python.org/3/library/exceptions.html#exception-hierarchy
+            pass
         except OSError as exc:
             if exc.errno != errno.ENAMETOOLONG:
                 raise exc
-        except PermissionError as pex:
-            pass
 
     non_existent_directories: Set[Path] = candidate_paths - existent_directories
     if non_existent_directories:
@@ -221,8 +225,11 @@ def get_cuda_runtime_lib_paths(candidate_paths: Set[Path]) -> Set[Path]:
     paths = set()
     for libname in CUDA_RUNTIME_LIBS:
         for path in candidate_paths:
-            if (path / libname).is_file():
-                paths.add(path / libname)
+            try:
+                if (path / libname).is_file():
+                    paths.add(path / libname)
+            except PermissionError:
+                pass
     return paths
 
 
@@ -244,14 +251,14 @@ def warn_in_case_of_duplicates(results_paths: Set[Path]) -> None:
     if len(results_paths) > 1:
         warning_msg = (
             f"Found duplicate {CUDA_RUNTIME_LIBS} files: {results_paths}.. "
-            f"We select the PyTorch default {'libcudart.so' if not IS_WINDOWS_PLATFORM else 'cudart64_*.dll'}, which is {torch.version.cuda},"
+            "We select the PyTorch default libcudart.so, which is {torch.version.cuda},"
             "but this might missmatch with the CUDA version that is needed for bitsandbytes."
             "To override this behavior set the BNB_CUDA_VERSION=<version string, e.g. 122> environmental variable"
-            "For example, if you want to use the CUDA version 122:"
-            "BNB_CUDA_VERSION=122 python ..." if not IS_WINDOWS_PLATFORM else "set BNB_CUDA_VERSION=122\npython ..."
-            "OR set the environmental variable in your .bashrc: export BNB_CUDA_VERSION=122" if not IS_WINDOWS_PLATFORM else ''
-            "In the case of a manual override, make sure you set the LD_LIBRARY_PATH, e.g." if not IS_WINDOWS_PLATFORM else ''
-            "export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-11.2" if not IS_WINDOWS_PLATFORM else '')
+            "For example, if you want to use the CUDA version 122"
+            "BNB_CUDA_VERSION=122 python ..."
+            "OR set the environmental variable in your .bashrc: export BNB_CUDA_VERSION=122"
+            "In the case of a manual override, make sure you set the LD_LIBRARY_PATH, e.g."
+            "export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-11.2")
         CUDASetup.get_instance().add_log_entry(warning_msg, is_warning=True)
 
 
@@ -269,124 +276,48 @@ def determine_cuda_runtime_lib_path() -> Union[Path, None]:
     """
     candidate_env_vars = get_potentially_lib_path_containing_env_vars()
 
+    cuda_runtime_libs = set()
     if "CONDA_PREFIX" in candidate_env_vars:
-        conda_libs_path = Path(candidate_env_vars["CONDA_PREFIX"]) / "bin"
-
-        conda_cuda_libs = find_cuda_lib_in(str(conda_libs_path))
-
-        if conda_cuda_libs:
-            warn_in_case_of_duplicates(conda_cuda_libs)
-            return next(iter(conda_cuda_libs))
-        
         conda_libs_path = Path(candidate_env_vars["CONDA_PREFIX"]) / "lib"
 
         conda_cuda_libs = find_cuda_lib_in(str(conda_libs_path))
+        warn_in_case_of_duplicates(conda_cuda_libs)
 
         if conda_cuda_libs:
-            warn_in_case_of_duplicates(conda_cuda_libs)
-            return next(iter(conda_cuda_libs))
+            cuda_runtime_libs.update(conda_cuda_libs)
 
         CUDASetup.get_instance().add_log_entry(f'{candidate_env_vars["CONDA_PREFIX"]} did not contain '
-            f'{CUDA_RUNTIME_LIBS} as expected! Searching further paths...', is_warning=True)
-
-    for sitedir in site.getsitepackages():
-        if "site-packages" in sitedir:
-                site_packages_path = sitedir
-                break
-    if site_packages_path:
-        torch_libs_path = os.path.join(site_packages_path, "torch", "lib")
-        
-        if os.path.isdir(torch_libs_path):
-            torch_cuda_libs = find_cuda_lib_in(str(torch_libs_path))
-
-            if torch_cuda_libs:
-                warn_in_case_of_duplicates(torch_cuda_libs)
-                return next(iter(torch_cuda_libs))
-
-            CUDASetup.get_instance().add_log_entry(f'{torch_cuda_libs} did not contain '
-                f'{CUDA_RUNTIME_LIBS} as expected! Searching further paths...', is_warning=True)
-        
-    if "CUDA_PATH" in candidate_env_vars:
-        win_toolkit_libs_path = Path(candidate_env_vars["CUDA_PATH"]) / "bin"
-    
-        win_toolkit_cuda_libs = find_cuda_lib_in(str(win_toolkit_libs_path))
-
-        if win_toolkit_cuda_libs:
-            warn_in_case_of_duplicates(win_toolkit_cuda_libs)
-            return next(iter(win_toolkit_cuda_libs))
-
-        win_toolkit_libs_path = Path(candidate_env_vars["CUDA_PATH"]) / "lib"
-    
-        win_toolkit_cuda_libs = find_cuda_lib_in(str(win_toolkit_libs_path))
-
-        if win_toolkit_cuda_libs:
-            warn_in_case_of_duplicates(win_toolkit_cuda_libs)
-            return next(iter(win_toolkit_cuda_libs))
-
-        CUDASetup.get_instance().add_log_entry(f'{candidate_env_vars["CUDA_PATH"]} did not contain '
-            f'{CUDA_RUNTIME_LIBS} as expected! Searching further paths...', is_warning=True)
-        
-    if "CUDA_HOME" in candidate_env_vars:
-        lin_toolkit_libs_path = Path(candidate_env_vars["CUDA_HOME"]) / "bin"
-    
-        lin_toolkit_cuda_libs = find_cuda_lib_in(str(lin_toolkit_libs_path))
-
-        if lin_toolkit_cuda_libs:
-            warn_in_case_of_duplicates(lin_toolkit_cuda_libs)
-            return next(iter(lin_toolkit_cuda_libs))
-        
-        lin_toolkit_libs_path = Path(candidate_env_vars["CUDA_HOME"]) / "lib"
-    
-        lin_toolkit_cuda_libs = find_cuda_lib_in(str(lin_toolkit_libs_path))
-
-        if lin_toolkit_cuda_libs:
-            warn_in_case_of_duplicates(lin_toolkit_cuda_libs)
-            return next(iter(lin_toolkit_cuda_libs))
-
-        CUDASetup.get_instance().add_log_entry(f'{candidate_env_vars["CUDA_HOME"]} did not contain '
             f'{CUDA_RUNTIME_LIBS} as expected! Searching further paths...', is_warning=True)
 
     if "LD_LIBRARY_PATH" in candidate_env_vars:
         lib_ld_cuda_libs = find_cuda_lib_in(candidate_env_vars["LD_LIBRARY_PATH"])
 
         if lib_ld_cuda_libs:
-            warn_in_case_of_duplicates(lib_ld_cuda_libs)
-            return next(iter(lib_ld_cuda_libs))
+            cuda_runtime_libs.update(lib_ld_cuda_libs)
+        warn_in_case_of_duplicates(lib_ld_cuda_libs)
 
         CUDASetup.get_instance().add_log_entry(f'{candidate_env_vars["LD_LIBRARY_PATH"]} did not contain '
             f'{CUDA_RUNTIME_LIBS} as expected! Searching further paths...', is_warning=True)
-        
-    if "PATH" in candidate_env_vars:
-        lib_path_cuda_libs = find_cuda_lib_in(candidate_env_vars["PATH"])
 
-        if lib_path_cuda_libs:
-            warn_in_case_of_duplicates(lib_path_cuda_libs)
-            return next(iter(lib_path_cuda_libs))
-
-        CUDASetup.get_instance().add_log_entry(f'{candidate_env_vars["PATH"]} did not contain '
-            f'{CUDA_RUNTIME_LIBS} as expected! Searching further paths...', is_warning=True)
-        
     remaining_candidate_env_vars = {
         env_var: value for env_var, value in candidate_env_vars.items()
-        if env_var not in {"CONDA_PREFIX", "CUDA_HOME", "CUDA_PATH", "LD_LIBRARY_PATH", "PATH"}
+        if env_var not in {"CONDA_PREFIX", "LD_LIBRARY_PATH"}
     }
 
-    possible_cuda_runtime_libs = set()
+    cuda_runtime_libs = set()
     for env_var, value in remaining_candidate_env_vars.items():
-        possible_cuda_runtime_libs.update(find_cuda_lib_in(value))
+        cuda_runtime_libs.update(find_cuda_lib_in(value))
 
-    if len(possible_cuda_runtime_libs) == 0:
-        CUDASetup.get_instance().add_log_entry(f'CUDA_SETUP: WARNING! {CUDA_RUNTIME_LIBS} not found in any environmental path. Searching in backup paths...')
-        backup_cuda_libs = [find_cuda_lib_in(os.path.realpath(backup_path)) for backup_path in backup_paths if os.path.isdir(backup_path)]
-        if backup_cuda_libs:
-            possible_cuda_runtime_libs.update(backup_cuda_libs)
+    if len(cuda_runtime_libs) == 0:
+        CUDASetup.get_instance().add_log_entry('CUDA_SETUP: WARNING! libcudart.so not found in any environmental path. Searching in backup paths...')
+        cuda_runtime_libs.update(find_cuda_lib_in('/usr/local/cuda/lib64'))
 
-    warn_in_case_of_duplicates(possible_cuda_runtime_libs)
+    warn_in_case_of_duplicates(cuda_runtime_libs)
 
     cuda_setup = CUDASetup.get_instance()
-    cuda_setup.add_log_entry(f'DEBUG: Possible options found for libcudart.so: {possible_cuda_runtime_libs}')
+    cuda_setup.add_log_entry(f'DEBUG: Possible options found for libcudart.so: {cuda_runtime_libs}')
 
-    return next(iter(possible_cuda_runtime_libs)) if possible_cuda_runtime_libs else None
+    return next(iter(cuda_runtime_libs)) if cuda_runtime_libs else None
 
 
 # https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART____VERSION.html#group__CUDART____VERSION
@@ -413,7 +344,7 @@ def evaluate_cuda_setup():
         cuda_setup.add_log_entry('')
         cuda_setup.add_log_entry('='*35 + 'BUG REPORT' + '='*35)
         cuda_setup.add_log_entry(('Welcome to bitsandbytes. For bug reports, please run\n\npython -m bitsandbytes\n\n'),
-              ('and submit this information together with your error trace to: https://github.com/jllllll/bitsandbytes/issues'))
+              ('and submit this information together with your error trace to: https://github.com/TimDettmers/bitsandbytes/issues'))
         cuda_setup.add_log_entry('='*80)
     if not torch.cuda.is_available(): return 'libbitsandbytes_cpu.so', None, None, None
 
@@ -439,9 +370,9 @@ def evaluate_cuda_setup():
     # since most installations will have the libcudart.so installed, but not the compiler
 
     if has_cublaslt:
-        binary_name = f"libbitsandbytes_cuda{cuda_version_string}" + SHARED_LIB_EXTENSION
+        binary_name = f"libbitsandbytes_cuda{cuda_version_string}.so"
     else:
-        "if not has_cublaslt (CC < 7.5), then we have to choose  _nocublaslt"
-        binary_name = f"libbitsandbytes_cuda{cuda_version_string}_nocublaslt" +  SHARED_LIB_EXTENSION
+        "if not has_cublaslt (CC < 7.5), then we have to choose  _nocublaslt.so"
+        binary_name = f"libbitsandbytes_cuda{cuda_version_string}_nocublaslt.so"
 
     return binary_name, cudart_path, cc, cuda_version_string
