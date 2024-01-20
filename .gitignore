@@ -3,7 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 .idea
-
+build*/
 # C extensions
 *.so
 
@@ -135,3 +135,6 @@ dmypy.json
 dependencies
 cuda_build
 .vscode/*
+*.lib
+*.dll
+*.exp

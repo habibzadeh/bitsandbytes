@@ -31,7 +31,7 @@ if( MAKE_CUDA_BUILD )
     set(CC_CUDA11x 75-real 80-real 86)
     set(CC_CUDA118 60-real 61-real 70-real 72-real 75-real 80-real 86-real 89-real 90)
 
-    option(NO_CUBLASLT "Don't use CUBLAST" ON)
+    option(NO_CUBLASLT "Don't use CUBLAST" OFF)
     set(CUDA_TARGET_ARCH_FEATURE_LEVEL "12.x" CACHE STRING
         "CUDA Target Architectures by Feature Level. DLL name is autodetected from installed cuda compiler.\n \
         Examples : 10.0, 11.0, 11.x, 12.x\n \
